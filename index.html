@@ -1,0 +1,2331 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SHOW DO AUDITÓRIO - TV & Palco (Raspberry Pi + Celular)</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PeerJS para sincronização WebRTC P2P sem servidor backend (ideal para GitHub Pages) -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- QRCode.js para geração instantânea do QR Code de pareamento -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Fonte Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      font-family: 'Montserrat', sans-serif;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      background: radial-gradient(circle at 50% 0%, #2e1065 0%, #0f0722 55%, #05020d 100%);
+      color: #ffffff;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    /* Efeito de luzes de estúdio de TV */
+    .stage-lights {
+      background-image:
+        radial-gradient(circle at 15% 15%, rgba(234, 179, 8, 0.16) 0%, transparent 40%),
+        radial-gradient(circle at 85% 15%, rgba(59, 130, 246, 0.18) 0%, transparent 40%),
+        radial-gradient(circle at 50% 90%, rgba(168, 85, 247, 0.18) 0%, transparent 50%);
+    }
+    .gold-gradient {
+      background: linear-gradient(135deg, #fde047 0%, #eab308 45%, #ca8a04 100%);
+    }
+    .tv-card {
+      background: rgba(17, 12, 46, 0.85);
+      backdrop-filter: blur(12px);
+      border: 2px solid rgba(250, 204, 21, 0.35);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.65), inset 0 0 20px rgba(168, 85, 247, 0.15);
+    }
+    .buzzer-pulse-p1 {
+      animation: pulseP1 0.8s infinite alternate;
+      box-shadow: 0 0 40px #ef4444, inset 0 0 20px #fca5a5;
+    }
+    .buzzer-pulse-p2 {
+      animation: pulseP2 0.8s infinite alternate;
+      box-shadow: 0 0 40px #3b82f6, inset 0 0 20px #93c5fd;
+    }
+    @keyframes pulseP1 {
+      from { transform: scale(1); box-shadow: 0 0 25px #ef4444; }
+      to { transform: scale(1.04); box-shadow: 0 0 55px #f87171; }
+    }
+    @keyframes pulseP2 {
+      from { transform: scale(1); box-shadow: 0 0 25px #3b82f6; }
+      to { transform: scale(1.04); box-shadow: 0 0 55px #60a5fa; }
+    }
+    .equalizer-bar {
+      animation: eqBounce 0.45s ease-in-out infinite alternate;
+    }
+    @keyframes eqBounce {
+      0% { transform: scaleY(0.2); }
+      100% { transform: scaleY(1); }
+    }
+    /* Scrollbar estilizada */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0f0722; }
+    ::-webkit-scrollbar-thumb { background: #6b21a8; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #eab308; }
+  </style>
+</head>
+<body class="stage-lights select-none">
+
+  <!-- NOTIFICAÇÃO FLUTUANTE (Substitui alert/confirm) -->
+  <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full px-4 sm:px-0"></div>
+
+  <!-- MODAL GUIA RASPBERRY PI 3B (GPIO + PYTHON SCRIPT) -->
+  <div id="rpi-modal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="tv-card rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 relative">
+      <div class="flex items-center justify-between border-b border-purple-700/50 pb-4 mb-5">
+        <div class="flex items-center gap-3">
+          <span class="text-3xl">🍓</span>
+          <div>
+            <h2 class="text-xl sm:text-2xl font-black text-yellow-400">Integração Hardware Raspberry Pi 3B</h2>
+            <p class="text-xs sm:text-sm text-purple-200">Conecte botões físicos nos pinos GPIO ou use Serial USB</p>
+          </div>
+        </div>
+        <button onclick="toggleRpiModal(false)" class="bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-2 rounded-xl text-sm">✕ Fechar</button>
+      </div>
+
+      <div class="space-y-4 text-sm text-gray-200">
+        <div class="bg-purple-950/70 border border-purple-600/40 rounded-2xl p-4">
+          <h3 class="font-bold text-yellow-300 text-base mb-2">1. Ligação Elétrica dos Botões na Raspberry Pi 3B</h3>
+          <ul class="list-disc list-inside space-y-1 text-purple-100">
+            <li><strong>Botão Jogador 1 (Vermelho):</strong> Ligue um fio no <strong>GPIO 17 (Pino físico 11)</strong> e o outro fio no <strong>GND (Pino físico 9)</strong>.</li>
+            <li><strong>Botão Jogador 2 (Azul):</strong> Ligue um fio no <strong>GPIO 27 (Pino físico 13)</strong> e o outro fio no <strong>GND (Pino físico 14)</strong>.</li>
+            <li><em>Não precisa de resistor externo!</em> O script abaixo ativa o <code>pull_up=True</code> interno da Raspberry Pi.</li>
+          </ul>
+        </div>
+
+        <div class="bg-purple-950/70 border border-purple-600/40 rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-bold text-yellow-300 text-base">2. Script Python para a Raspberry Pi (botoes_auditorio.py)</h3>
+            <button onclick="copyRpiScript()" class="bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold px-3 py-1.5 rounded-lg text-xs transition">📋 Copiar Script Python</button>
+          </div>
+          <p class="text-xs text-purple-200 mb-2">Este script transforma o aperto nos pinos GPIO 17 e GPIO 27 nas teclas <strong>[1]</strong> e <strong>[2]</strong> instantaneamente no navegador Chromium em tela cheia:</p>
+          <pre id="rpi-python-code" class="bg-black/90 text-green-400 p-4 rounded-xl text-xs overflow-x-auto border border-gray-800 leading-relaxed font-mono">#!/usr/bin/env python3
+# Instale as bibliotecas na Raspberry Pi 3B:
+# sudo apt update && sudo apt install -y python3-gpiozero python3-pynput
+from gpiozero import Button
+from pynput.keyboard import Controller
+from signal import pause
+import time
+
+keyboard = Controller()
+
+# GPIO 17 (Pino 11) = Jogador 1 | GPIO 27 (Pino 13) = Jogador 2
+btn_jogador_1 = Button(17, pull_up=True, bounce_time=0.05)
+btn_jogador_2 = Button(27, pull_up=True, bounce_time=0.05)
+
+def acionar_j1():
+    print("JOGADOR 1 APERTOU!")
+    keyboard.press('1')
+    time.sleep(0.05)
+    keyboard.release('1')
+
+def acionar_j2():
+    print("JOGADOR 2 APERTOU!")
+    keyboard.press('2')
+    time.sleep(0.05)
+    keyboard.release('2')
+
+btn_jogador_1.when_pressed = acionar_j1
+btn_jogador_2.when_pressed = acionar_j2
+
+print("=== BOTOES DO AUDITORIO ATIVOS (GPIO 17 e GPIO 27) ===")
+pause()</pre>
+        </div>
+
+        <div class="bg-blue-950/60 border border-blue-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <h3 class="font-bold text-blue-300">3. Alternativa: Arduino / ESP32 via Cabo USB (Web Serial API)</h3>
+            <p class="text-xs text-blue-100">Se usar um Arduino/ESP32 enviando <code>"P1"</code> ou <code>"P2"</code> pela serial (115200 baud), conecte direto pelo navegador:</p>
+          </div>
+          <button onclick="connectWebSerial()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs whitespace-nowrap shadow-lg">🔌 Conectar Porta Serial USB</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- TELA INICIAL: ESCOLHA DE PAPEL (PALCO/TV vs CELULAR APRESENTADOR)     -->
+  <!-- ===================================================================== -->
+  <div id="role-selection-screen" class="min-h-screen flex flex-col items-center justify-center p-4 sm:p-8">
+    <div class="max-w-4xl w-full text-center space-y-6">
+      <div class="inline-flex items-center gap-2 bg-yellow-500/20 border border-yellow-400/50 text-yellow-300 px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold tracking-wider uppercase">
+        <span>📺 Edição Raspberry Pi 3B + Celular</span>
+      </div>
+
+      <h1 class="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 via-yellow-400 to-amber-600 drop-shadow-[0_5px_25px_rgba(234,179,8,0.4)]">
+        SHOW DO AUDITÓRIO
+      </h1>
+      <p class="text-purple-200 text-sm sm:text-lg max-w-2xl mx-auto">
+        Quiz Interativo &amp; Qual é a Música com distorção ao vivo. Conecte a TV/Raspberry Pi ao celular do apresentador via QR Code P2P!
+      </p>
+
+      <!-- Cartões de Escolha de Modo -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+        <!-- MODO TV / PALCO (RASPBERRY PI) -->
+        <div class="tv-card rounded-3xl p-6 sm:p-8 flex flex-col justify-between text-left hover:border-yellow-400 transition group">
+          <div>
+            <div class="w-14 h-14 rounded-2xl bg-yellow-500/20 border border-yellow-400/40 flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition">
+              🖥️
+            </div>
+            <h2 class="text-2xl font-black text-white mb-2">1. Tela do Palco / TV</h2>
+            <p class="text-sm text-purple-200 leading-relaxed mb-4">
+              Abra este modo na <strong>Raspberry Pi 3B</strong> ou computador ligado na TV. Gera um <strong>QR Code</strong> para o celular do apresentador sincronizar e recebe os botões físicos GPIO.
+            </p>
+          </div>
+          <button onclick="startAsHost()" class="w-full gold-gradient text-black font-black py-4 px-6 rounded-2xl text-base sm:text-lg shadow-xl hover:brightness-110 active:scale-95 transition">
+            ABRIR TELA DO PALCO (TV) →
+          </button>
+        </div>
+
+        <!-- MODO CELULAR DO APRESENTADOR -->
+        <div class="tv-card rounded-3xl p-6 sm:p-8 flex flex-col justify-between text-left hover:border-blue-400 transition group">
+          <div>
+            <div class="w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-400/40 flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition">
+              📱
+            </div>
+            <h2 class="text-2xl font-black text-white mb-2">2. Celular do Apresentador</h2>
+            <p class="text-sm text-purple-200 leading-relaxed mb-4">
+              Escaneie o QR Code na tela da TV ou digite o código da sala abaixo para controlar perguntas, ver respostas certas, distorcer músicas e validar pontos.
+            </p>
+            <div class="flex gap-2 mb-4">
+              <input id="manual-room-code" type="text" placeholder="Código da Sala (ex: PALCO-1234)" class="flex-1 bg-black/50 border border-purple-500/50 rounded-xl px-4 py-3 text-white font-bold uppercase text-sm focus:outline-none focus:border-yellow-400" />
+            </div>
+          </div>
+          <button onclick="startAsPresenterManual()" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black py-4 px-6 rounded-2xl text-base sm:text-lg shadow-xl active:scale-95 transition">
+            CONECTAR COMO APRESENTADOR →
+          </button>
+        </div>
+      </div>
+
+      <!-- Modo Local / Tela Única e Botão Hardware -->
+      <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
+        <button onclick="startAsHybrid()" class="bg-purple-900/70 hover:bg-purple-800 border border-purple-500/50 text-purple-100 font-bold px-5 py-3 rounded-2xl text-xs sm:text-sm transition">
+          ⚡ Modo Tela Única (Testar TV + Apresentador juntos)
+        </button>
+        <button onclick="toggleRpiModal(true)" class="bg-emerald-900/70 hover:bg-emerald-800 border border-emerald-500/50 text-emerald-200 font-bold px-5 py-3 rounded-2xl text-xs sm:text-sm transition">
+          🍓 Configurar Botões Raspberry Pi 3B (GPIO)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- APLICAÇÃO PRINCIPAL (STAGE TV / PRESENTER / HYBRID)                   -->
+  <!-- ===================================================================== -->
+  <div id="main-app" class="hidden min-h-screen flex flex-col">
+
+    <!-- BARRA SUPERIOR DE STATUS & CONEXÃO -->
+    <header class="bg-black/60 border-b border-purple-700/50 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-40 backdrop-blur-md">
+      <div class="flex items-center gap-2 sm:gap-3">
+        <span class="text-xl sm:text-2xl">🎪</span>
+        <div>
+          <span class="font-black text-yellow-400 text-sm sm:text-base tracking-wide">SHOW DO AUDITÓRIO</span>
+          <span id="role-badge" class="ml-2 text-[10px] sm:text-xs font-extrabold px-2.5 py-0.5 rounded-full bg-purple-700 text-white uppercase">PALCO TV</span>
+        </div>
+      </div>
+
+      <!-- Status da Conexão P2P e Botões Físicos -->
+      <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <div id="gpio-indicator" class="hidden sm:flex items-center gap-1.5 bg-emerald-950/80 border border-emerald-500/40 px-3 py-1 rounded-full text-xs text-emerald-300 font-bold" title="Teclas 1/A para Jogador 1 e 2/L para Jogador 2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <span>GPIO / Teclado Ativo [1] e [2]</span>
+        </div>
+
+        <div id="connection-status-pill" class="flex items-center gap-2 bg-gray-900 border border-yellow-500/40 px-3 py-1 rounded-full text-xs font-bold">
+          <span id="conn-dot" class="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse"></span>
+          <span id="conn-text" class="text-yellow-200">Iniciando sala...</span>
+        </div>
+
+        <button onclick="toggleQrOverlay()" id="btn-show-qr" class="bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold px-3 py-1.5 rounded-xl text-xs transition shadow">
+          📱 QR Code
+        </button>
+
+        <button onclick="toggleRpiModal(true)" class="bg-purple-800 hover:bg-purple-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition">
+          🍓 GPIO
+        </button>
+
+        <button onclick="unlockAudioContext(); playSound('applause')" class="bg-pink-700 hover:bg-pink-600 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition" title="Ativar Áudio">
+          🔊 Som
+        </button>
+      </div>
+    </header>
+
+    <!-- OVERLAY DO QR CODE PARA CONECTAR O CELULAR DO APRESENTADOR -->
+    <div id="qr-overlay" class="hidden fixed inset-0 z-40 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+      <div class="tv-card rounded-3xl p-6 sm:p-8 max-w-md w-full text-center space-y-4">
+        <h3 class="text-2xl font-black text-yellow-400">Parear Celular do Apresentador</h3>
+        <p class="text-xs sm:text-sm text-purple-200">
+          Aponte a câmera do celular para o QR Code abaixo para abrir o controle do apresentador sincronizado com esta TV:
+        </p>
+        <div class="bg-white p-4 rounded-2xl inline-block mx-auto shadow-2xl">
+          <div id="qrcode-container"></div>
+        </div>
+        <div class="bg-purple-950/90 border border-purple-500/40 rounded-xl p-3">
+          <div class="text-xs text-purple-300">Código Manual da Sala:</div>
+          <div id="display-room-id" class="text-xl font-black text-yellow-300 tracking-widest select-all">---</div>
+        </div>
+        <div class="flex gap-2 justify-center">
+          <button onclick="copyShareLink()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs">
+            🔗 Copiar Link do Apresentador
+          </button>
+          <button onclick="toggleQrOverlay(false)" class="bg-yellow-500 hover:bg-yellow-400 text-black font-black px-5 py-2.5 rounded-xl text-xs">
+            Continuar →
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- PLACAR FIXO DOS 2 JOGADORES (VISÍVEL EM AMBAS AS TELAS)             -->
+    <!-- =================================================================== -->
+    <section class="max-w-7xl w-full mx-auto px-3 sm:px-6 pt-3 sm:pt-4">
+      <div class="grid grid-cols-2 gap-3 sm:gap-6">
+        <!-- JOGADOR 1 -->
+        <div id="card-player-1" onclick="triggerBuzzer(1)" class="cursor-pointer rounded-2xl sm:rounded-3xl p-3 sm:p-5 bg-gradient-to-br from-red-950/90 via-red-900/70 to-black border-2 border-red-500/60 transition-all relative overflow-hidden">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+              <span id="p1-avatar" class="text-2xl sm:text-4xl bg-red-600/40 p-1.5 sm:p-2 rounded-xl border border-red-400/50">🦁</span>
+              <div class="min-w-0">
+                <div class="text-[10px] sm:text-xs font-extrabold uppercase tracking-wider text-red-300">Jogador 1 • Botão [1]</div>
+                <div id="p1-name-display" class="text-base sm:text-2xl font-black text-white truncate">Jogador 1</div>
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="text-[10px] sm:text-xs text-red-200 font-bold uppercase">Pontos</div>
+              <div id="p1-score-display" class="text-2xl sm:text-5xl font-black text-yellow-300 tabular-nums">0</div>
+            </div>
+          </div>
+          <div id="p1-buzzed-banner" class="hidden mt-2 bg-red-600 text-white text-center font-black text-xs sm:text-sm py-1 rounded-lg uppercase tracking-wider animate-bounce">
+            🚨 APERTOU PRIMEIRO! RESPONDE AGORA!
+          </div>
+        </div>
+
+        <!-- JOGADOR 2 -->
+        <div id="card-player-2" onclick="triggerBuzzer(2)" class="cursor-pointer rounded-2xl sm:rounded-3xl p-3 sm:p-5 bg-gradient-to-br from-blue-950/90 via-blue-900/70 to-black border-2 border-blue-500/60 transition-all relative overflow-hidden">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+              <span id="p2-avatar" class="text-2xl sm:text-4xl bg-blue-600/40 p-1.5 sm:p-2 rounded-xl border border-blue-400/50">🦈</span>
+              <div class="min-w-0">
+                <div class="text-[10px] sm:text-xs font-extrabold uppercase tracking-wider text-blue-300">Jogador 2 • Botão [2]</div>
+                <div id="p2-name-display" class="text-base sm:text-2xl font-black text-white truncate">Jogador 2</div>
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="text-[10px] sm:text-xs text-blue-200 font-bold uppercase">Pontos</div>
+              <div id="p2-score-display" class="text-2xl sm:text-5xl font-black text-yellow-300 tabular-nums">0</div>
+            </div>
+          </div>
+          <div id="p2-buzzed-banner" class="hidden mt-2 bg-blue-600 text-white text-center font-black text-xs sm:text-sm py-1 rounded-lg uppercase tracking-wider animate-bounce">
+            🚨 APERTOU PRIMEIRO! RESPONDE AGORA!
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- ÁREA PRINCIPAL: VISÃO DO PALCO (TV) + CONTROLE DO APRESENTADOR       -->
+    <!-- =================================================================== -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 flex flex-col gap-5">
+
+      <!-- ================================================================= -->
+      <!-- BLOCO A: TELA DE EXIBIÇÃO DO PALCO / TV (RASPBERRY PI 3B)         -->
+      <!-- ================================================================= -->
+      <div id="stage-tv-view" class="tv-card rounded-3xl p-5 sm:p-8 flex-1 flex flex-col justify-between relative overflow-hidden">
+        <!-- Barra Superior do Palco: Modo Atual + Timer Gigante -->
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-purple-700/40 pb-4">
+          <div class="flex items-center gap-3">
+            <span id="stage-mode-badge" class="bg-yellow-500 text-black font-black px-3.5 py-1 rounded-xl text-xs sm:text-sm uppercase tracking-wider">
+              ❓ QUIZ DE AUDITÓRIO
+            </span>
+            <span id="stage-question-counter" class="text-purple-200 font-bold text-xs sm:text-base">
+              Pergunta 1 de 5
+            </span>
+          </div>
+
+          <!-- CRONÔMETRO GIGANTE -->
+          <div class="flex items-center gap-3">
+            <span class="text-xs uppercase font-bold text-purple-300 hidden sm:inline">Tempo:</span>
+            <div id="stage-timer-box" class="bg-black/80 border-2 border-yellow-400 px-5 py-2 rounded-2xl flex items-center gap-2 shadow-lg">
+              <span class="text-xl">⏱️</span>
+              <span id="stage-timer-value" class="text-3xl sm:text-4xl font-black text-yellow-300 tabular-nums">20</span>
+              <span class="text-xs font-bold text-yellow-500">s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONTEÚDO DINÂMICO DO PALCO -->
+        <div id="stage-content-area" class="my-auto py-4 sm:py-6">
+
+          <!-- 1. ESTADO ESPERA / LOBBY NO PALCO -->
+          <div id="stage-lobby-panel" class="text-center space-y-5 py-4">
+            <h2 class="text-2xl sm:text-4xl font-black text-yellow-300">Bem-vindos ao Show do Auditório!</h2>
+            <p class="text-sm sm:text-lg text-purple-200 max-w-2xl mx-auto">
+              Cadastre os jogadores, carregue as perguntas ou músicas no painel do apresentador e aperte os botões físicos para testar!
+            </p>
+            <!-- Mini QR Code direto no Lobby da TV -->
+            <div id="lobby-qr-box" class="inline-flex flex-col items-center bg-white/95 text-black p-4 rounded-2xl shadow-xl">
+              <div id="lobby-qrcode"></div>
+              <span class="text-xs font-black mt-2 uppercase tracking-wider text-purple-950">Escaneie no Celular do Apresentador</span>
+              <span id="lobby-room-code" class="text-sm font-extrabold text-purple-700">---</span>
+            </div>
+          </div>
+
+          <!-- 2. ESTADO JOGO DE PERGUNTAS E RESPOSTAS (QUIZ) NO PALCO -->
+          <div id="stage-quiz-panel" class="hidden space-y-6">
+            <div class="bg-gradient-to-r from-purple-950 via-indigo-950 to-purple-950 border-2 border-yellow-400/60 rounded-3xl p-5 sm:p-8 shadow-2xl">
+              <div class="text-xs font-extrabold uppercase tracking-widest text-yellow-400 mb-2">Pergunta na Tela:</div>
+              <h2 id="tv-question-text" class="text-2xl sm:text-4xl font-black text-white leading-snug">
+                Carregando pergunta...
+              </h2>
+            </div>
+
+            <!-- Alternativas A, B, C, D -->
+            <div id="tv-options-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+              <!-- Preenchido via JS -->
+            </div>
+          </div>
+
+          <!-- 3. ESTADO JOGO "QUAL É A MÚSICA?" NO PALCO -->
+          <div id="stage-music-panel" class="hidden text-center space-y-6">
+            <div class="inline-flex items-center gap-2 bg-pink-600/30 border border-pink-400/50 text-pink-200 px-4 py-1.5 rounded-full text-xs sm:text-sm font-extrabold uppercase">
+              🎵 Desafio Musical • Qual é a Música?
+            </div>
+
+            <h2 id="tv-music-status-title" class="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-pink-400 to-cyan-300">
+              OUÇA COM ATENÇÃO E APERTE O BOTÃO!
+            </h2>
+
+            <!-- Equalizador Animado de Palco -->
+            <div id="music-visualizer" class="flex items-end justify-center gap-2 h-24 sm:h-32 py-2">
+              <div class="w-3 sm:w-4 bg-yellow-400 rounded-t-lg equalizer-bar h-full" style="animation-delay: 0.05s"></div>
+              <div class="w-3 sm:w-4 bg-pink-500 rounded-t-lg equalizer-bar h-4/5" style="animation-delay: 0.15s"></div>
+              <div class="w-3 sm:w-4 bg-cyan-400 rounded-t-lg equalizer-bar h-full" style="animation-delay: 0.25s"></div>
+              <div class="w-3 sm:w-4 bg-purple-400 rounded-t-lg equalizer-bar h-3/5" style="animation-delay: 0.1s"></div>
+              <div class="w-3 sm:w-4 bg-yellow-300 rounded-t-lg equalizer-bar h-full" style="animation-delay: 0.3s"></div>
+              <div class="w-3 sm:w-4 bg-emerald-400 rounded-t-lg equalizer-bar h-4/5" style="animation-delay: 0.2s"></div>
+              <div class="w-3 sm:w-4 bg-pink-400 rounded-t-lg equalizer-bar h-full" style="animation-delay: 0.35s"></div>
+              <div class="w-3 sm:w-4 bg-blue-400 rounded-t-lg equalizer-bar h-3/4" style="animation-delay: 0.12s"></div>
+            </div>
+
+            <!-- Indicador de Distorção vs Som Normal -->
+            <div class="flex justify-center">
+              <div id="tv-distortion-badge" class="bg-red-600/90 border-2 border-red-300 text-white font-black px-6 py-2.5 rounded-2xl text-sm sm:text-lg shadow-lg">
+                🎛️ ÁUDIO DISTORCIDO ATIVO!
+              </div>
+            </div>
+
+            <!-- Revelação do Nome da Música na TV -->
+            <div id="tv-music-reveal-box" class="hidden bg-emerald-950/90 border-2 border-emerald-400 rounded-3xl p-6 max-w-2xl mx-auto">
+              <div class="text-xs font-extrabold uppercase text-emerald-300 mb-1">A Música Era:</div>
+              <div id="tv-music-reveal-title" class="text-2xl sm:text-4xl font-black text-white">---</div>
+            </div>
+
+            <!-- Player YouTube Oculto/Integrado na TV (para tocar o áudio na caixa de som do auditório) -->
+            <div id="youtube-player-wrapper" class="max-w-md mx-auto rounded-2xl overflow-hidden border-2 border-purple-500/40 shadow-2xl opacity-15 pointer-events-none h-24">
+              <div id="yt-player"></div>
+            </div>
+          </div>
+
+          <!-- 4. ESTADO TELA FINAL DE VITÓRIA / PÓDIO -->
+          <div id="stage-victory-panel" class="hidden text-center space-y-6 py-6">
+            <div class="text-6xl sm:text-8xl animate-bounce">🏆</div>
+            <div class="text-sm sm:text-lg font-extrabold uppercase tracking-widest text-yellow-400">Fim de Jogo • Resultado Final</div>
+            <h2 id="victory-winner-title" class="text-3xl sm:text-6xl font-black text-white">
+              CAMPEÃO: JOGADOR 1!
+            </h2>
+            <p id="victory-subtitle" class="text-base sm:text-xl text-purple-200 font-bold">
+              Parabéns pela vitória espetacular no Show do Auditório!
+            </p>
+            <div class="grid grid-cols-2 gap-4 max-w-xl mx-auto pt-2">
+              <div class="bg-red-950/80 border border-red-500 rounded-2xl p-4">
+                <div id="final-p1-name" class="font-bold text-red-200">Jogador 1</div>
+                <div id="final-p1-score" class="text-3xl sm:text-4xl font-black text-yellow-300">0 pts</div>
+              </div>
+              <div class="bg-blue-950/80 border border-blue-500 rounded-2xl p-4">
+                <div id="final-p2-name" class="font-bold text-blue-200">Jogador 2</div>
+                <div id="final-p2-score" class="text-3xl sm:text-4xl font-black text-yellow-300">0 pts</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- RODAPÉ DE CONTROLE RÁPIDO DE BOTÕES NA TELA DA TV (TOUCH / TESTE) -->
+        <div class="border-t border-purple-700/40 pt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div class="text-xs text-purple-300 font-semibold">
+            💡 Pressione os botões físicos na Raspberry Pi ou toque nos botões abaixo:
+          </div>
+          <div class="flex gap-3 w-full sm:w-auto">
+            <button onclick="triggerBuzzer(1)" class="flex-1 sm:flex-initial bg-red-600 hover:bg-red-500 active:scale-95 text-white font-black px-5 py-3 rounded-2xl text-sm shadow-lg border-b-4 border-red-800 transition">
+              🔴 BOTÃO JOGADOR 1
+            </button>
+            <button onclick="triggerBuzzer(2)" class="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-black px-5 py-3 rounded-2xl text-sm shadow-lg border-b-4 border-blue-800 transition">
+              🔵 BOTÃO JOGADOR 2
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================= -->
+      <!-- BLOCO B: PAINEL DE CONTROLE DO APRESENTADOR (CELULAR / REMOTO)    -->
+      <!-- ================================================================= -->
+      <div id="presenter-control-view" class="tv-card rounded-3xl p-4 sm:p-6 space-y-5 border-2 border-blue-400/50">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-purple-700/50 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl">🎙️</span>
+            <div>
+              <h2 class="text-lg sm:text-xl font-black text-yellow-400">Painel do Apresentador</h2>
+              <p class="text-xs text-purple-200">Controle o jogo ao vivo, veja as respostas certas e julgue os jogadores</p>
+            </div>
+          </div>
+
+          <!-- Abas de Navegação do Apresentador -->
+          <div class="flex flex-wrap gap-1.5 bg-black/50 p-1.5 rounded-2xl border border-purple-700/40">
+            <button onclick="switchPresenterTab('quiz')" id="tab-btn-quiz" class="px-3 py-2 rounded-xl text-xs font-black bg-yellow-500 text-black transition">
+              ❓ Quiz (P&amp;R)
+            </button>
+            <button onclick="switchPresenterTab('music')" id="tab-btn-music" class="px-3 py-2 rounded-xl text-xs font-black text-purple-200 hover:bg-purple-800/50 transition">
+              🎵 Qual é a Música
+            </button>
+            <button onclick="switchPresenterTab('players')" id="tab-btn-players" class="px-3 py-2 rounded-xl text-xs font-black text-purple-200 hover:bg-purple-800/50 transition">
+              👥 Jogadores
+            </button>
+            <button onclick="switchPresenterTab('bank')" id="tab-btn-bank" class="px-3 py-2 rounded-xl text-xs font-black text-purple-200 hover:bg-purple-800/50 transition">
+              📝 Editar Perguntas
+            </button>
+          </div>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- PAINEL DE JULGAMENTO AO VIVO (QUANDO ALGUÉM APERTA O BOTÃO)     -->
+        <!-- =============================================================== -->
+        <div id="presenter-live-buzzer-box" class="hidden rounded-2xl p-4 sm:p-5 bg-gradient-to-r from-amber-500/20 via-yellow-500/20 to-amber-500/20 border-2 border-yellow-400 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl animate-ping">🚨</span>
+              <div>
+                <div class="text-xs font-bold uppercase text-yellow-300">Botão Acionado Primeiro:</div>
+                <div id="presenter-buzzed-player-name" class="text-xl sm:text-2xl font-black text-white">JOGADOR 1</div>
+              </div>
+            </div>
+            <button onclick="unlockBuzzerAndResume()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 font-bold px-3 py-2 rounded-xl text-xs">
+              🔓 Destravar / Continuar Tempo
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
+            <button onclick="judgeAnswer(true)" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black py-3.5 px-4 rounded-xl text-sm sm:text-base shadow-lg">
+              ✅ ACERTOU (+100)
+            </button>
+            <button onclick="judgeAnswer(false)" class="bg-red-600 hover:bg-red-500 active:scale-95 text-white font-black py-3.5 px-4 rounded-xl text-sm sm:text-base shadow-lg">
+              ❌ ERROU (-50)
+            </button>
+            <button onclick="passTurnToOtherPlayer()" class="col-span-2 sm:col-span-1 bg-amber-600 hover:bg-amber-500 active:scale-95 text-white font-black py-3.5 px-4 rounded-xl text-sm shadow-lg">
+              🔄 Passar p/ Outro Jogador
+            </button>
+          </div>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- ABA 1: CONTROLE AO VIVO DO QUIZ (PERGUNTAS E RESPOSTAS)         -->
+        <!-- =============================================================== -->
+        <div id="presenter-tab-quiz" class="space-y-4">
+          <!-- Cola Secreta do Apresentador (Mostra qual opção tem o R!) -->
+          <div class="bg-black/60 border border-yellow-500/40 rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-extrabold uppercase text-yellow-400">🔒 Visão Exclusiva do Apresentador (Resposta Certa Destacada):</span>
+              <span id="presenter-q-progress" class="text-xs font-bold text-purple-300">Pergunta 1 / 5</span>
+            </div>
+            <div id="presenter-question-preview" class="text-base sm:text-lg font-black text-white">
+              Clique em "Iniciar / Mostrar Pergunta na TV" para começar!
+            </div>
+            <div id="presenter-options-preview" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <!-- Alternativas com destaque verde na resposta (R) -->
+            </div>
+          </div>
+
+          <!-- Botões de Ação do Apresentador para o Quiz -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <button onclick="startOrShowCurrentQuestion()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3.5 px-3 rounded-2xl text-xs sm:text-sm shadow-lg transition">
+              ▶️ Mostrar Pergunta &amp; Timer
+            </button>
+            <button onclick="revealQuizAnswerOnTv()" class="bg-blue-600 hover:bg-blue-500 text-white font-black py-3.5 px-3 rounded-2xl text-xs sm:text-sm shadow-lg transition">
+              👁️ Revelar Resposta na TV
+            </button>
+            <button onclick="skipToNextQuestion()" class="bg-amber-600 hover:bg-amber-500 text-white font-black py-3.5 px-3 rounded-2xl text-xs sm:text-sm shadow-lg transition">
+              ⏭️ Pular Pergunta
+            </button>
+            <button onclick="finishGameShowVictory()" class="bg-purple-700 hover:bg-purple-600 text-white font-black py-3.5 px-3 rounded-2xl text-xs sm:text-sm shadow-lg transition">
+              🏆 Encerrar &amp; Pódio
+            </button>
+          </div>
+
+          <!-- Configuração rápida de Tempo por Pergunta -->
+          <div class="flex flex-wrap items-center justify-between gap-3 bg-purple-950/60 border border-purple-700/40 rounded-2xl p-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-purple-200">⏱️ Tempo do Timer:</span>
+              <select id="timer-duration-select" onchange="updateTimerDuration(this.value)" class="bg-black/70 border border-purple-500 rounded-xl px-3 py-1.5 text-xs font-bold text-yellow-300">
+                <option value="10">10 segundos</option>
+                <option value="15">15 segundos</option>
+                <option value="20" selected>20 segundos</option>
+                <option value="30">30 segundos</option>
+                <option value="45">45 segundos</option>
+              </select>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="toggleTimerPause()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs">
+                ⏯️ Pausar/Retomar Timer
+              </button>
+              <button onclick="resetFullGame()" class="bg-red-950 hover:bg-red-900 text-red-200 border border-red-700/50 font-bold px-3 py-1.5 rounded-xl text-xs">
+                🔄 Zerar Placar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- ABA 2: QUAL É A MÚSICA (YOUTUBE + DISTORÇÃO EM TEMPO REAL)      -->
+        <!-- =============================================================== -->
+        <div id="presenter-tab-music" class="hidden space-y-4">
+          <div class="bg-pink-950/40 border border-pink-500/40 rounded-2xl p-4 space-y-3">
+            <h3 class="text-sm sm:text-base font-black text-pink-300">🎵 Carregar Música do YouTube ou Arquivo Local (MP3/WAV)</h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <!-- Entrada YouTube -->
+              <div class="space-y-2 bg-black/40 p-3 rounded-xl border border-purple-700/40">
+                <label class="text-xs font-bold text-purple-200 block">1. Link ou ID do YouTube + Nome Secreto da Música:</label>
+                <input id="yt-url-input" type="text" placeholder="Cole link do YouTube (ex: https://youtu.be/dQw4w9WgXcQ)" class="w-full bg-black/70 border border-purple-500/50 rounded-xl px-3 py-2 text-xs text-white" />
+                <div class="flex gap-2">
+                  <input id="yt-title-input" type="text" placeholder="Nome da Música (para revelar depois)" class="flex-1 bg-black/70 border border-purple-500/50 rounded-xl px-3 py-2 text-xs text-white" />
+                  <button onclick="loadYouTubeTrack()" class="bg-red-600 hover:bg-red-500 text-white font-black px-4 py-2 rounded-xl text-xs whitespace-nowrap">
+                    ▶️ Carregar YT
+                  </button>
+                </div>
+              </div>
+
+              <!-- Entrada Arquivo MP3/WAV Local (Distorção Web Audio DSP Completa) -->
+              <div class="space-y-2 bg-black/40 p-3 rounded-xl border border-purple-700/40">
+                <label class="text-xs font-bold text-purple-200 block">2. Ou Arquivo de Áudio MP3/WAV (Distorção DSP Profissional):</label>
+                <input id="local-audio-file" type="file" accept="audio/*" onchange="loadLocalAudioFile(event)" class="w-full text-xs text-purple-200 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-pink-600 file:text-white hover:file:bg-pink-500" />
+                <p class="text-[11px] text-purple-300">Suporta filtro robótico, telefone, eco e pitch em tempo real sem restrições de embed!</p>
+              </div>
+            </div>
+
+            <!-- Playlist Rápida Pré-configurada -->
+            <div class="pt-1">
+              <div class="text-xs font-bold text-purple-300 mb-1.5">⚡ Músicas Prontas para Teste Rápido (YouTube):</div>
+              <div class="flex flex-wrap gap-2">
+                <button onclick="quickSelectMusic('fJ9rUzIMcZQ', 'Queen - Bohemian Rhapsody')" class="bg-purple-900/80 hover:bg-purple-800 border border-purple-500/40 px-3 py-1.5 rounded-xl text-xs font-bold">🎸 Bohemian Rhapsody</button>
+                <button onclick="quickSelectMusic('Zi_XLOBDo_Y', 'Michael Jackson - Billie Jean')" class="bg-purple-900/80 hover:bg-purple-800 border border-purple-500/40 px-3 py-1.5 rounded-xl text-xs font-bold">🕺 Billie Jean</button>
+                <button onclick="quickSelectMusic('9bZkp7q19f0', 'PSY - Gangnam Style')" class="bg-purple-900/80 hover:bg-purple-800 border border-purple-500/40 px-3 py-1.5 rounded-xl text-xs font-bold">🐴 Gangnam Style</button>
+                <button onclick="quickSelectMusic('kJQP7kiw5Fk', 'Luis Fonsi - Despacito')" class="bg-purple-900/80 hover:bg-purple-800 border border-purple-500/40 px-3 py-1.5 rounded-xl text-xs font-bold">💃 Despacito</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MESA DE DISTORÇÃO EM TEMPO REAL -->
+          <div class="bg-black/60 border-2 border-cyan-500/40 rounded-2xl p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 class="text-sm sm:text-base font-black text-cyan-300">🎛️ Mesa de Distorção ao Vivo</h4>
+                <p class="text-xs text-gray-300">Altere os efeitos enquanto a música toca e clique em <strong>TOCAR NORMAL</strong> para revelar!</p>
+              </div>
+              <span id="music-current-name-presenter" class="bg-purple-900 text-yellow-300 font-bold px-3 py-1 rounded-xl text-xs">
+                Nenhuma música selecionada
+              </span>
+            </div>
+
+            <!-- Controles de Efeito -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="bg-purple-950/60 p-3 rounded-xl border border-purple-700/40">
+                <label class="text-xs font-bold text-cyan-200 flex justify-between mb-1">
+                  <span>Velocidade / Pitch:</span>
+                  <span id="rate-label" class="text-yellow-300">0.65x (Grave Lento)</span>
+                </label>
+                <input id="music-rate-slider" type="range" min="0.5" max="2.0" step="0.05" value="0.65" oninput="updateDistortionParams()" class="w-full accent-cyan-400" />
+                <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>0.5x Monstro</span>
+                  <span>1.0x Normal</span>
+                  <span>2.0x Esquilo</span>
+                </div>
+              </div>
+
+              <div class="bg-purple-950/60 p-3 rounded-xl border border-purple-700/40">
+                <label class="text-xs font-bold text-cyan-200 block mb-1">Tipo de Distorção / Corte:</label>
+                <select id="distortion-mode-select" onchange="updateDistortionParams()" class="w-full bg-black/80 border border-cyan-500/40 rounded-xl px-3 py-2 text-xs font-bold text-white">
+                  <option value="slow_chop">🌀 Lento + Picotado (Rádio Falhando)</option>
+                  <option value="chipmunk">🐿️ Voz de Esquilo (Acelerado 1.75x)</option>
+                  <option value="monster">👹 Voz de Monstro (Grave 0.55x)</option>
+                  <option value="robot_overdrive">🤖 Robô Overdrive + Eco (MP3/DSP)</option>
+                  <option value="stutter_fast">⚡ Corte Rítmico Rápido (Tremolo)</option>
+                </select>
+              </div>
+
+              <div class="bg-purple-950/60 p-3 rounded-xl border border-purple-700/40 flex flex-col justify-center gap-2">
+                <button onclick="setMusicDistortedMode(true)" id="btn-mode-distorted" class="w-full bg-red-600 hover:bg-red-500 text-white font-black py-2 px-3 rounded-xl text-xs shadow">
+                  🎛️ TOCAR DISTORCIDA
+                </button>
+                <button onclick="setMusicDistortedMode(false)" id="btn-mode-normal" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-2 px-3 rounded-xl text-xs shadow">
+                  ✨ TOCAR NORMAL (ORIGINAL)
+                </button>
+              </div>
+            </div>
+
+            <!-- Botões de Transporte da Música -->
+            <div class="grid grid-cols-3 gap-2.5">
+              <button onclick="playMusicRound()" class="bg-pink-600 hover:bg-pink-500 text-white font-black py-3 rounded-2xl text-xs sm:text-sm shadow-lg">
+                ▶️ Tocar Música
+              </button>
+              <button onclick="pauseMusicRound()" class="bg-gray-700 hover:bg-gray-600 text-white font-black py-3 rounded-2xl text-xs sm:text-sm shadow-lg">
+                ⏸️ Pausar
+              </button>
+              <button onclick="revealMusicOnTv()" class="bg-yellow-500 hover:bg-yellow-400 text-black font-black py-3 rounded-2xl text-xs sm:text-sm shadow-lg">
+                🎉 Revelar Música na TV
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- ABA 3: CADASTRO DE JOGADORES                                    -->
+        <!-- =============================================================== -->
+        <div id="presenter-tab-players" class="hidden space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Cadastro Jogador 1 -->
+            <div class="bg-red-950/40 border border-red-500/40 rounded-2xl p-4 space-y-3">
+              <h3 class="font-black text-red-300 text-sm uppercase">🔴 Cadastro Jogador 1 (Botão 1)</h3>
+              <div>
+                <label class="text-xs text-gray-300 block mb-1">Nome do Participante:</label>
+                <input id="input-p1-name" type="text" value="Jogador 1" class="w-full bg-black/60 border border-red-500/50 rounded-xl px-3 py-2.5 text-white font-bold text-sm" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-300 block mb-1">Avatar:</label>
+                <select id="input-p1-avatar" class="w-full bg-black/60 border border-red-500/50 rounded-xl px-3 py-2.5 text-white font-bold text-sm">
+                  <option value="🦁">🦁 Leão</option>
+                  <option value="🔥">🔥 Fogo</option>
+                  <option value="🚀">🚀 Foguete</option>
+                  <option value="🎸">🎸 Rockstar</option>
+                  <option value="👑">👑 Rei / Rainha</option>
+                  <option value="🦸">🦸 Herói</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Cadastro Jogador 2 -->
+            <div class="bg-blue-950/40 border border-blue-500/40 rounded-2xl p-4 space-y-3">
+              <h3 class="font-black text-blue-300 text-sm uppercase">🔵 Cadastro Jogador 2 (Botão 2)</h3>
+              <div>
+                <label class="text-xs text-gray-300 block mb-1">Nome do Participante:</label>
+                <input id="input-p2-name" type="text" value="Jogador 2" class="w-full bg-black/60 border border-blue-500/50 rounded-xl px-3 py-2.5 text-white font-bold text-sm" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-300 block mb-1">Avatar:</label>
+                <select id="input-p2-avatar" class="w-full bg-black/60 border border-blue-500/50 rounded-xl px-3 py-2.5 text-white font-bold text-sm">
+                  <option value="🦈">🦈 Tubarão</option>
+                  <option value="⚡">⚡ Raio</option>
+                  <option value="🤖">🤖 Robô</option>
+                  <option value="🎧">🎧 DJ</option>
+                  <option value="🐯">🐯 Tigre</option>
+                  <option value="🌟">🌟 Estrela</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <button onclick="savePlayersConfig()" class="w-full gold-gradient text-black font-black py-3.5 rounded-2xl text-sm sm:text-base shadow-xl hover:brightness-110 transition">
+            💾 SALVAR JOGADORES E ATUALIZAR NA TV
+          </button>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- ABA 4: IMPORTADOR DE PERGUNTAS NO FORMATO (1) ... (R)           -->
+        <!-- =============================================================== -->
+        <div id="presenter-tab-bank" class="hidden space-y-4">
+          <div class="bg-purple-950/50 border border-purple-500/40 rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 class="text-sm sm:text-base font-black text-yellow-300">📝 Colar Lista de Perguntas e Respostas</h3>
+                <p class="text-xs text-purple-200">
+                  Use <code>(1) Pergunta?</code> e coloque <code>(R)</code> na frente da alternativa correta. O sistema esconde o <code>(R)</code> na TV!
+                </p>
+              </div>
+              <button onclick="loadDefaultSampleQuestions()" class="bg-purple-800 hover:bg-purple-700 text-xs font-bold px-3 py-1.5 rounded-xl">
+                📋 Restaurar Exemplo
+              </button>
+            </div>
+
+            <textarea id="questions-raw-textarea" rows="11" class="w-full bg-black/75 border border-purple-500/50 rounded-2xl p-3.5 text-xs sm:text-sm text-green-300 font-mono leading-relaxed focus:outline-none focus:border-yellow-400" placeholder="(1) Qual é a capital do Brasil?
+São Paulo
+Rio de Janeiro
+Brasília (R)
+Salvador"></textarea>
+
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <span id="parsed-count-badge" class="text-xs font-bold text-emerald-300">
+                ✅ 5 perguntas prontas no banco
+              </span>
+              <button onclick="parseAndSaveQuestions()" class="gold-gradient text-black font-black px-6 py-3 rounded-2xl text-xs sm:text-sm shadow-lg hover:brightness-110 transition">
+                ✅ IMPORTAR E SINCRONIZAR PERGUNTAS
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- =============================================================== -->
+        <!-- MESA DE SONOPLASTIA DO APRESENTADOR (SOUNDBOARD DE AUDITÓRIO)   -->
+        <!-- =============================================================== -->
+        <div class="border-t border-purple-700/40 pt-3">
+          <div class="text-[11px] font-extrabold uppercase tracking-wider text-purple-300 mb-2">
+            🔊 Sonoplastia Instantânea de Auditório:
+          </div>
+          <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            <button onclick="triggerSoundBroadcast('applause')" class="bg-purple-900/70 hover:bg-purple-800 border border-purple-500/40 py-2 px-2 rounded-xl text-xs font-bold">👏 Aplausos</button>
+            <button onclick="triggerSoundBroadcast('correct')" class="bg-emerald-900/70 hover:bg-emerald-800 border border-emerald-500/40 py-2 px-2 rounded-xl text-xs font-bold">🎺 Fanfarra</button>
+            <button onclick="triggerSoundBroadcast('wrong')" class="bg-red-900/70 hover:bg-red-800 border border-red-500/40 py-2 px-2 rounded-xl text-xs font-bold">📯 Buzina Erro</button>
+            <button onclick="triggerSoundBroadcast('drumroll')" class="bg-amber-900/70 hover:bg-amber-800 border border-amber-500/40 py-2 px-2 rounded-xl text-xs font-bold">🥁 Tambores</button>
+            <button onclick="triggerSoundBroadcast('skip')" class="bg-cyan-900/70 hover:bg-cyan-800 border border-cyan-500/40 py-2 px-2 rounded-xl text-xs font-bold">💨 Pular</button>
+            <button onclick="triggerSoundBroadcast('victory')" class="bg-yellow-700/70 hover:bg-yellow-600 border border-yellow-400/40 py-2 px-2 rounded-xl text-xs font-bold">🏆 Vitória</button>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- JAVASCRIPT COMPLETO: PARSER, PEERJS P2P, AUDIO DSP, YOUTUBE & GPIO    -->
+  <!-- ===================================================================== -->
+  <script>
+    // =========================================================================
+    // 1. ESTADO GLOBAL DO JOGO
+    // =========================================================================
+    const DEFAULT_QUESTIONS_TEXT = `(1) Qual é o maior planeta do Sistema Solar?
+Terra
+Marte
+Júpiter (R)
+Saturno
+
+(2) Qual placa computadorizada é famosa pelos seus 40 pinos GPIO usados neste jogo?
+Arduino Uno
+Raspberry Pi 3 B (R)
+PlayStation 2
+Calculadora Científica
+
+(3) Em qual país fica a Torre Eiffel?
+Itália
+Espanha
+França (R)
+Alemanha
+
+(4) Quantos segundos tem 2 minutos e meio?
+120 segundos
+150 segundos (R)
+180 segundos
+250 segundos
+
+(5) Qual elemento químico tem o símbolo O na tabela periódica?
+Ouro
+Ósmio
+Oxigênio (R)
+Prata`;
+
+    let appState = {
+      role: 'hybrid', // 'host' (TV/Raspberry Pi), 'presenter' (Celular), 'hybrid' (Ambos)
+      roomId: '',
+      mode: 'lobby', // 'lobby', 'quiz', 'music', 'victory'
+      players: {
+        1: { name: 'Jogador 1', avatar: '🦁', score: 0 },
+        2: { name: 'Jogador 2', avatar: '🦈', score: 0 }
+      },
+      questions: [],
+      currentQuestionIndex: 0,
+      questionRevealed: false,
+      buzzedPlayer: null, // null | 1 | 2
+      lockedOutPlayer: null, // Jogador que já errou na rodada atual
+      timerDuration: 20,
+      timeLeft: 20,
+      timerRunning: false,
+      music: {
+        sourceType: 'youtube', // 'youtube' | 'local'
+        youtubeId: 'fJ9rUzIMcZQ',
+        title: 'Queen - Bohemian Rhapsody',
+        isPlaying: false,
+        isDistorted: true,
+        rate: 0.65,
+        distortionMode: 'slow_chop',
+        revealed: false
+      }
+    };
+
+    let timerInterval = null;
+    let stutterInterval = null;
+
+    // PeerJS (WebRTC P2P)
+    let peer = null;
+    let hostConnections = []; // Usado pelo Host para enviar estado aos celulares
+    let presenterConn = null; // Usado pelo Celular para falar com o Host
+
+    // YouTube IFrame API
+    let ytPlayer = null;
+    let ytReady = false;
+    let pendingYtId = null;
+
+    // Web Audio API (Sintetizador de Efeitos de Auditório + DSP para Áudio Local)
+    let audioCtx = null;
+    let localAudioEl = null;
+    let localMediaSource = null;
+    let dspFilterNode = null;
+    let dspWaveShaper = null;
+    let dspDelayNode = null;
+    let dspFeedbackGain = null;
+    let dspDryGain = null;
+    let dspWetGain = null;
+
+    // =========================================================================
+    // 2. INICIALIZAÇÃO & DETECÇÃO AUTOMÁTICA DE PARÂMETRO ?host= NA URL
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSavedData();
+      setupKeyboardAndGpioListeners();
+
+      // Verifica se o celular abriu via QR Code (?host=PALCO-XXXX)
+      const urlParams = new URLSearchParams(window.location.search);
+      const hostParam = urlParams.get('host');
+      if (hostParam) {
+        document.getElementById('manual-room-code').value = hostParam.toUpperCase();
+        startAsPresenter(hostParam.toUpperCase());
+      }
+    });
+
+    function loadSavedData() {
+      try {
+        const savedPlayers = localStorage.getItem('show_auditorio_players');
+        if (savedPlayers) {
+          const parsed = JSON.parse(savedPlayers);
+          appState.players[1].name = parsed[1]?.name || 'Jogador 1';
+          appState.players[1].avatar = parsed[1]?.avatar || '🦁';
+          appState.players[2].name = parsed[2]?.name || 'Jogador 2';
+          appState.players[2].avatar = parsed[2]?.avatar || '🦈';
+        }
+        const savedRawQuestions = localStorage.getItem('show_auditorio_raw_questions');
+        const textarea = document.getElementById('questions-raw-textarea');
+        textarea.value = savedRawQuestions || DEFAULT_QUESTIONS_TEXT;
+        appState.questions = parseQuestionsFromText(textarea.value);
+        updateParsedCountBadge();
+      } catch (e) {
+        console.warn('Erro ao ler localStorage:', e);
+        appState.questions = parseQuestionsFromText(DEFAULT_QUESTIONS_TEXT);
+      }
+    }
+
+    // =========================================================================
+    // 3. PARSER INTELIGENTE DE PERGUNTAS NO ESTILO "(1) Pergunta? ... (R)"
+    // =========================================================================
+    function parseQuestionsFromText(rawText) {
+      const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      const questions = [];
+      let currentQ = null;
+
+      // Expressão regular que detecta início de pergunta: (1), (2), 1., 1), etc.
+      const questionStartRegex = /^(?:\(\d+\)|\d+[\.\)\-])\s*(.+)$/;
+      // Expressão regular que detecta a marcação (R) na alternativa certa
+      const correctTagRegex = /\(\s*R\s*\)/i;
+
+      for (const line of lines) {
+        const qMatch = line.match(questionStartRegex);
+        if (qMatch) {
+          if (currentQ && currentQ.options.length > 0) {
+            questions.push(currentQ);
+          }
+          currentQ = {
+            question: qMatch[1].trim(),
+            options: [],
+            correctIndex: 0
+          };
+        } else if (currentQ) {
+          const isCorrect = correctTagRegex.test(line);
+          // Remove "(R)" e prefixos opcionais como "a)", "A -", etc. para exibição limpa
+          const cleanOption = line
+            .replace(correctTagRegex, '')
+            .replace(/^[a-eA-E][\)\.\-]\s+/, '')
+            .trim();
+
+          if (isCorrect) {
+            currentQ.correctIndex = currentQ.options.length;
+          }
+          currentQ.options.push(cleanOption);
+        }
+      }
+
+      if (currentQ && currentQ.options.length > 0) {
+        questions.push(currentQ);
+      }
+
+      return questions;
+    }
+
+    function parseAndSaveQuestions() {
+      const raw = document.getElementById('questions-raw-textarea').value;
+      const parsed = parseQuestionsFromText(raw);
+      if (parsed.length === 0) {
+        showToast('Nenhuma pergunta válida encontrada! Use o formato (1) Pergunta? e (R) na certa.', 'error');
+        return;
+      }
+      appState.questions = parsed;
+      appState.currentQuestionIndex = 0;
+      appState.questionRevealed = false;
+      localStorage.setItem('show_auditorio_raw_questions', raw);
+      updateParsedCountBadge();
+
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'UPDATE_QUESTIONS', questions: parsed });
+      } else {
+        broadcastState();
+      }
+      renderAllUI();
+      showToast(`${parsed.length} perguntas importadas e sincronizadas!`, 'success');
+      switchPresenterTab('quiz');
+    }
+
+    function loadDefaultSampleQuestions() {
+      document.getElementById('questions-raw-textarea').value = DEFAULT_QUESTIONS_TEXT;
+      parseAndSaveQuestions();
+    }
+
+    function updateParsedCountBadge() {
+      const badge = document.getElementById('parsed-count-badge');
+      if (badge) {
+        badge.textContent = `✅ ${appState.questions.length} perguntas prontas no banco`;
+      }
+    }
+
+    // =========================================================================
+    // 4. ESCOLHA DE PAPEL & SINCRONIZAÇÃO WEBRTC P2P (PEERJS + QR CODE)
+    // =========================================================================
+    function generateRoomCode() {
+      const num = Math.floor(1000 + Math.random() * 9000);
+      return `PALCO-${num}`;
+    }
+
+    function startAsHost() {
+      unlockAudioContext();
+      appState.role = 'host';
+      appState.roomId = generateRoomCode();
+      enterMainApp();
+      initPeerHost(appState.roomId);
+      generateRoomQrCodes(appState.roomId);
+    }
+
+    function startAsPresenterManual() {
+      const code = document.getElementById('manual-room-code').value.trim().toUpperCase();
+      if (!code) {
+        showToast('Digite o código exibido na tela da TV (ex: PALCO-1234)', 'error');
+        return;
+      }
+      startAsPresenter(code);
+    }
+
+    function startAsPresenter(targetRoomId) {
+      unlockAudioContext();
+      appState.role = 'presenter';
+      appState.roomId = targetRoomId;
+      enterMainApp();
+      initPeerPresenter(targetRoomId);
+    }
+
+    function startAsHybrid() {
+      unlockAudioContext();
+      appState.role = 'hybrid';
+      appState.roomId = generateRoomCode();
+      enterMainApp();
+      initPeerHost(appState.roomId);
+      generateRoomQrCodes(appState.roomId);
+      showToast('Modo Tela Única ativado! Você também pode escanear o QR Code no celular.', 'info');
+    }
+
+    function enterMainApp() {
+      document.getElementById('role-selection-screen').classList.add('hidden');
+      document.getElementById('main-app').classList.remove('hidden');
+
+      const roleBadge = document.getElementById('role-badge');
+      const stageView = document.getElementById('stage-tv-view');
+      const presenterView = document.getElementById('presenter-control-view');
+
+      if (appState.role === 'host') {
+        roleBadge.textContent = '🖥️ PALCO / TV (RASPBERRY PI)';
+        stageView.classList.remove('hidden');
+        presenterView.classList.add('hidden');
+      } else if (appState.role === 'presenter') {
+        roleBadge.textContent = '📱 CELULAR APRESENTADOR';
+        stageView.classList.add('hidden');
+        presenterView.classList.remove('hidden');
+        document.getElementById('btn-show-qr').classList.add('hidden');
+      } else {
+        roleBadge.textContent = '⚡ TELA ÚNICA (TV + CONTROLE)';
+        stageView.classList.remove('hidden');
+        presenterView.classList.remove('hidden');
+      }
+
+      // Preenche inputs de jogadores
+      document.getElementById('input-p1-name').value = appState.players[1].name;
+      document.getElementById('input-p1-avatar').value = appState.players[1].avatar;
+      document.getElementById('input-p2-name').value = appState.players[2].name;
+      document.getElementById('input-p2-avatar').value = appState.players[2].avatar;
+
+      loadYouTubeApiScript();
+      renderAllUI();
+    }
+
+    function initPeerHost(roomId) {
+      updateConnectionPill('yellow', `Sala ${roomId} • Aguardando celular...`);
+      try {
+        peer = new Peer(roomId, { debug: 1 });
+        peer.on('open', (id) => {
+          updateConnectionPill('green', `TV Online • Sala: ${id}`);
+        });
+
+        peer.on('connection', (conn) => {
+          hostConnections.push(conn);
+          updateConnectionPill('green', `📱 Apresentador Conectado! (${hostConnections.length})`);
+          showToast('Celular do Apresentador conectado com sucesso!', 'success');
+          playSound('correct');
+          toggleQrOverlay(false);
+
+          conn.on('open', () => {
+            conn.send({ type: 'SYNC_STATE', state: appState });
+          });
+
+          conn.on('data', (data) => {
+            handlePresenterCommandOnHost(data);
+          });
+
+          conn.on('close', () => {
+            hostConnections = hostConnections.filter(c => c !== conn);
+            updateConnectionPill('yellow', `Sala ${roomId} • Celular desconectado`);
+          });
+        });
+
+        peer.on('error', (err) => {
+          console.warn('PeerJS Host notice:', err);
+          updateConnectionPill('yellow', `Modo Local / GPIO Ativo (${roomId})`);
+        });
+      } catch (e) {
+        updateConnectionPill('yellow', 'Modo Local Offline Ativo');
+      }
+    }
+
+    function initPeerPresenter(targetRoomId) {
+      updateConnectionPill('yellow', `Conectando à TV ${targetRoomId}...`);
+      try {
+        peer = new Peer({ debug: 1 });
+        peer.on('open', () => {
+          presenterConn = peer.connect(targetRoomId, { reliable: true });
+
+          presenterConn.on('open', () => {
+            updateConnectionPill('green', `✅ Conectado à TV (${targetRoomId})`);
+            showToast('Sincronizado com a Tela do Palco!', 'success');
+          });
+
+          presenterConn.on('data', (data) => {
+            if (data.type === 'SYNC_STATE') {
+              appState = { ...appState, ...data.state, role: 'presenter' };
+              renderAllUI();
+            } else if (data.type === 'PLAY_SOUND') {
+              playSound(data.sound);
+            }
+          });
+
+          presenterConn.on('close', () => {
+            updateConnectionPill('red', 'Conexão perdida com a TV');
+          });
+        });
+
+        peer.on('error', (err) => {
+          updateConnectionPill('red', 'Sala não encontrada. Verifique o código!');
+          showToast('Não foi possível conectar à TV. Verifique se a TV está aberta.', 'error');
+        });
+      } catch (e) {
+        updateConnectionPill('red', 'Erro WebRTC no navegador');
+      }
+    }
+
+    function broadcastState() {
+      if (appState.role === 'presenter') return;
+      hostConnections.forEach(conn => {
+        if (conn && conn.open) {
+          conn.send({ type: 'SYNC_STATE', state: appState });
+        }
+      });
+    }
+
+    function sendActionToHost(actionObj) {
+      if (appState.role === 'presenter' && presenterConn && presenterConn.open) {
+        presenterConn.send(actionObj);
+      } else {
+        handlePresenterCommandOnHost(actionObj);
+      }
+    }
+
+    function updateConnectionPill(color, text) {
+      const dot = document.getElementById('conn-dot');
+      const label = document.getElementById('conn-text');
+      label.textContent = text;
+      dot.className = 'w-2.5 h-2.5 rounded-full ' + (
+        color === 'green' ? 'bg-emerald-400' :
+        color === 'red' ? 'bg-red-500' : 'bg-yellow-400 animate-pulse'
+      );
+    }
+
+    function generateRoomQrCodes(roomId) {
+      const baseUrl = window.location.href.split('?')[0];
+      const presenterUrl = `${baseUrl}?host=${encodeURIComponent(roomId)}`;
+
+      document.getElementById('display-room-id').textContent = roomId;
+      document.getElementById('lobby-room-code').textContent = `Código: ${roomId}`;
+
+      const qrModalEl = document.getElementById('qrcode-container');
+      const qrLobbyEl = document.getElementById('lobby-qrcode');
+      qrModalEl.innerHTML = '';
+      qrLobbyEl.innerHTML = '';
+
+      if (typeof QRCode !== 'undefined') {
+        new QRCode(qrModalEl, {
+          text: presenterUrl,
+          width: 210,
+          height: 210,
+          colorDark: '#0f0722',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+        new QRCode(qrLobbyEl, {
+          text: presenterUrl,
+          width: 145,
+          height: 145,
+          colorDark: '#0f0722',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      }
+    }
+
+    function toggleQrOverlay(forceState) {
+      const el = document.getElementById('qr-overlay');
+      if (typeof forceState === 'boolean') {
+        el.classList.toggle('hidden', !forceState);
+      } else {
+        el.classList.toggle('hidden');
+      }
+    }
+
+    function copyShareLink() {
+      const baseUrl = window.location.href.split('?')[0];
+      const presenterUrl = `${baseUrl}?host=${encodeURIComponent(appState.roomId)}`;
+      const tempInput = document.createElement('input');
+      tempInput.value = presenterUrl;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      showToast('Link do Apresentador copiado!', 'success');
+    }
+
+    // =========================================================================
+    // 5. PROCESSAMENTO DE COMANDOS ENTRE CELULAR DO APRESENTADOR E PALCO TV
+    // =========================================================================
+    function handlePresenterCommandOnHost(cmd) {
+      switch (cmd.type) {
+        case 'BUZZER':
+          triggerBuzzer(cmd.playerNum);
+          break;
+        case 'UNLOCK_BUZZER':
+          unlockBuzzerAndResume();
+          break;
+        case 'JUDGE':
+          judgeAnswer(cmd.isCorrect);
+          break;
+        case 'PASS_TURN':
+          passTurnToOtherPlayer();
+          break;
+        case 'SHOW_QUESTION':
+          startOrShowCurrentQuestion();
+          break;
+        case 'REVEAL_QUIZ':
+          revealQuizAnswerOnTv();
+          break;
+        case 'SKIP_QUESTION':
+          skipToNextQuestion();
+          break;
+        case 'FINISH_GAME':
+          finishGameShowVictory();
+          break;
+        case 'UPDATE_TIMER_DURATION':
+          updateTimerDuration(cmd.duration);
+          break;
+        case 'TOGGLE_TIMER_PAUSE':
+          toggleTimerPause();
+          break;
+        case 'RESET_GAME':
+          resetFullGame();
+          break;
+        case 'SAVE_PLAYERS':
+          appState.players[1].name = cmd.p1.name;
+          appState.players[1].avatar = cmd.p1.avatar;
+          appState.players[2].name = cmd.p2.name;
+          appState.players[2].avatar = cmd.p2.avatar;
+          localStorage.setItem('show_auditorio_players', JSON.stringify(appState.players));
+          broadcastState();
+          renderAllUI();
+          break;
+        case 'UPDATE_QUESTIONS':
+          appState.questions = cmd.questions;
+          appState.currentQuestionIndex = 0;
+          appState.questionRevealed = false;
+          broadcastState();
+          renderAllUI();
+          break;
+        case 'MUSIC_LOAD_YT':
+          appState.mode = 'music';
+          appState.music.sourceType = 'youtube';
+          appState.music.youtubeId = cmd.youtubeId;
+          appState.music.title = cmd.title;
+          appState.music.revealed = false;
+          appState.buzzedPlayer = null;
+          loadVideoInYouTubePlayer(cmd.youtubeId);
+          broadcastState();
+          renderAllUI();
+          break;
+        case 'MUSIC_PLAY':
+          playMusicRound();
+          break;
+        case 'MUSIC_PAUSE':
+          pauseMusicRound();
+          break;
+        case 'MUSIC_SET_DISTORTED':
+          setMusicDistortedMode(cmd.isDistorted);
+          break;
+        case 'MUSIC_UPDATE_PARAMS':
+          appState.music.rate = cmd.rate;
+          appState.music.distortionMode = cmd.distortionMode;
+          applyAudioDistortionSettings();
+          broadcastState();
+          renderAllUI();
+          break;
+        case 'MUSIC_REVEAL':
+          revealMusicOnTv();
+          break;
+        case 'PLAY_SOUND':
+          playSound(cmd.sound);
+          break;
+      }
+    }
+
+    // =========================================================================
+    // 6. BOTÕES FÍSICOS RASPBERRY PI 3B (GPIO / TECLADO / WEB SERIAL)
+    // =========================================================================
+    function setupKeyboardAndGpioListeners() {
+      window.addEventListener('keydown', (e) => {
+        // Ignora se estiver digitando em input ou textarea
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+        // Teclas mapeadas para Jogador 1 (GPIO 17)
+        if (e.key === '1' || e.key.toLowerCase() === 'a' || e.code === 'ShiftLeft') {
+          e.preventDefault();
+          triggerBuzzer(1);
+        }
+        // Teclas mapeadas para Jogador 2 (GPIO 27)
+        else if (e.key === '2' || e.key.toLowerCase() === 'l' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          triggerBuzzer(2);
+        }
+      });
+    }
+
+    async function connectWebSerial() {
+      if (!('serial' in navigator)) {
+        showToast('Seu navegador não suporta Web Serial. Use o script Python GPIO na Raspberry Pi!', 'error');
+        return;
+      }
+      try {
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        showToast('Porta Serial conectada! Aguardando sinais P1 / P2...', 'success');
+        const textDecoder = new TextDecoderStream();
+        port.readable.pipeTo(textDecoder.writable);
+        const reader = textDecoder.readable.getReader();
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            const clean = value.trim().toUpperCase();
+            if (clean.includes('1') || clean.includes('P1')) triggerBuzzer(1);
+            if (clean.includes('2') || clean.includes('P2')) triggerBuzzer(2);
+          }
+        }
+      } catch (err) {
+        showToast('Conexão Serial cancelada ou indisponível.', 'info');
+      }
+    }
+
+    function toggleRpiModal(show) {
+      document.getElementById('rpi-modal').classList.toggle('hidden', !show);
+    }
+
+    function copyRpiScript() {
+      const code = document.getElementById('rpi-python-code').textContent;
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('Script Python GPIO copiado! Cole na Raspberry Pi 3B.', 'success');
+    }
+
+    // =========================================================================
+    // 7. LÓGICA DO BUZZER (QUEM APERTOU PRIMEIRO + TRAVA DO ADVERSÁRIO)
+    // =========================================================================
+    function triggerBuzzer(playerNum) {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'BUZZER', playerNum });
+        return;
+      }
+
+      // Se alguém já apertou e está travado, ignora o outro botão!
+      if (appState.buzzedPlayer !== null) return;
+
+      // Se este jogador já errou e passou a vez para o outro, bloqueia ele nesta rodada
+      if (appState.lockedOutPlayer === playerNum) {
+        showToast(`${appState.players[playerNum].name} já tentou nesta rodada!`, 'info');
+        return;
+      }
+
+      unlockAudioContext();
+      appState.buzzedPlayer = playerNum;
+      stopTimer();
+
+      // Se estiver tocando música, pausa para o jogador cantar/responder!
+      if (appState.mode === 'music' && appState.music.isPlaying) {
+        pauseMusicRound(true);
+      }
+
+      playSound(playerNum === 1 ? 'buzzer1' : 'buzzer2');
+      broadcastState();
+      renderAllUI();
+    }
+
+    function unlockBuzzerAndResume() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'UNLOCK_BUZZER' });
+        return;
+      }
+      appState.buzzedPlayer = null;
+      if (appState.mode === 'quiz' && appState.timeLeft > 0) {
+        startTimer();
+      }
+      broadcastState();
+      renderAllUI();
+    }
+
+    function judgeAnswer(isCorrect) {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'JUDGE', isCorrect });
+        return;
+      }
+
+      const p = appState.buzzedPlayer;
+      if (!p) return;
+
+      if (isCorrect) {
+        appState.players[p].score += 100;
+        appState.buzzedPlayer = null;
+        appState.lockedOutPlayer = null;
+        playSound('correct');
+        showToast(`✅ ${appState.players[p].name} ACERTOU! +100 pontos!`, 'success');
+
+        if (appState.mode === 'quiz') {
+          appState.questionRevealed = true;
+          stopTimer();
+        } else if (appState.mode === 'music') {
+          // Revela a música e toca NORMAL para a plateia!
+          setMusicDistortedMode(false);
+          revealMusicOnTv();
+          playMusicRound();
+        }
+      } else {
+        appState.players[p].score = Math.max(0, appState.players[p].score - 50);
+        playSound('wrong');
+        showToast(`❌ ${appState.players[p].name} ERROU! (-50 pts)`, 'error');
+        appState.buzzedPlayer = null;
+        appState.lockedOutPlayer = null;
+      }
+
+      broadcastState();
+      renderAllUI();
+    }
+
+    function passTurnToOtherPlayer() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'PASS_TURN' });
+        return;
+      }
+      const current = appState.buzzedPlayer;
+      if (!current) return;
+      const other = current === 1 ? 2 : 1;
+
+      playSound('wrong');
+      appState.lockedOutPlayer = current;
+      appState.buzzedPlayer = other;
+      showToast(`🔄 Passou a vez para ${appState.players[other].name}!`, 'info');
+      broadcastState();
+      renderAllUI();
+    }
+
+    // =========================================================================
+    // 8. FLUXO DO MODO 1: QUIZ (PERGUNTAS E RESPOSTAS + TIMER)
+    // =========================================================================
+    function startOrShowCurrentQuestion() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'SHOW_QUESTION' });
+        return;
+      }
+      if (appState.questions.length === 0) {
+        showToast('Cadastre perguntas primeiro na aba Editar Perguntas!', 'error');
+        return;
+      }
+
+      pauseMusicRound(true);
+      appState.mode = 'quiz';
+      appState.buzzedPlayer = null;
+      appState.lockedOutPlayer = null;
+      appState.questionRevealed = false;
+      appState.timeLeft = appState.timerDuration;
+      startTimer();
+      broadcastState();
+      renderAllUI();
+    }
+
+    function revealQuizAnswerOnTv() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'REVEAL_QUIZ' });
+        return;
+      }
+      appState.questionRevealed = true;
+      stopTimer();
+      playSound('correct');
+      broadcastState();
+      renderAllUI();
+    }
+
+    function skipToNextQuestion() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'SKIP_QUESTION' });
+        return;
+      }
+      playSound('skip');
+      if (appState.currentQuestionIndex + 1 < appState.questions.length) {
+        appState.currentQuestionIndex++;
+        startOrShowCurrentQuestion();
+      } else {
+        finishGameShowVictory();
+      }
+    }
+
+    function finishGameShowVictory() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'FINISH_GAME' });
+        return;
+      }
+      stopTimer();
+      pauseMusicRound(true);
+      appState.mode = 'victory';
+      appState.buzzedPlayer = null;
+      playSound('victory');
+      broadcastState();
+      renderAllUI();
+    }
+
+    function startTimer() {
+      stopTimer();
+      appState.timerRunning = true;
+      timerInterval = setInterval(() => {
+        if (!appState.timerRunning) return;
+        appState.timeLeft--;
+
+        if (appState.timeLeft > 0) {
+          playSound(appState.timeLeft <= 5 ? 'tickUrgent' : 'tick');
+        } else {
+          appState.timeLeft = 0;
+          stopTimer();
+          playSound('wrong');
+          showToast('⏰ TEMPO ESGOTADO! Aperte o botão agora!', 'error');
+        }
+
+        broadcastState();
+        renderTimerOnly();
+      }, 1000);
+    }
+
+    function stopTimer() {
+      appState.timerRunning = false;
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    function toggleTimerPause() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'TOGGLE_TIMER_PAUSE' });
+        return;
+      }
+      if (appState.timerRunning) {
+        stopTimer();
+      } else if (appState.timeLeft > 0) {
+        startTimer();
+      }
+      broadcastState();
+      renderAllUI();
+    }
+
+    function updateTimerDuration(val) {
+      const num = parseInt(val, 10) || 20;
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'UPDATE_TIMER_DURATION', duration: num });
+        return;
+      }
+      appState.timerDuration = num;
+      appState.timeLeft = num;
+      broadcastState();
+      renderAllUI();
+    }
+
+    function resetFullGame() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'RESET_GAME' });
+        return;
+      }
+      stopTimer();
+      pauseMusicRound(true);
+      appState.players[1].score = 0;
+      appState.players[2].score = 0;
+      appState.currentQuestionIndex = 0;
+      appState.buzzedPlayer = null;
+      appState.lockedOutPlayer = null;
+      appState.questionRevealed = false;
+      appState.mode = 'lobby';
+      broadcastState();
+      renderAllUI();
+      showToast('Placar zerado e jogo reiniciado!', 'info');
+    }
+
+    function savePlayersConfig() {
+      const p1Name = document.getElementById('input-p1-name').value.trim() || 'Jogador 1';
+      const p1Avatar = document.getElementById('input-p1-avatar').value;
+      const p2Name = document.getElementById('input-p2-name').value.trim() || 'Jogador 2';
+      const p2Avatar = document.getElementById('input-p2-avatar').value;
+
+      if (appState.role === 'presenter') {
+        sendActionToHost({
+          type: 'SAVE_PLAYERS',
+          p1: { name: p1Name, avatar: p1Avatar },
+          p2: { name: p2Name, avatar: p2Avatar }
+        });
+      } else {
+        appState.players[1].name = p1Name;
+        appState.players[1].avatar = p1Avatar;
+        appState.players[2].name = p2Name;
+        appState.players[2].avatar = p2Avatar;
+        localStorage.setItem('show_auditorio_players', JSON.stringify(appState.players));
+        broadcastState();
+        renderAllUI();
+      }
+      showToast('Jogadores salvos e atualizados na TV!', 'success');
+    }
+
+    // =========================================================================
+    // 9. MODO 2: QUAL É A MÚSICA (YOUTUBE IFRAME API + DISTORÇÃO REAL-TIME)
+    // =========================================================================
+    function loadYouTubeApiScript() {
+      if (window.YT && window.YT.Player) {
+        initYouTubePlayer();
+        return;
+      }
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(tag);
+    }
+
+    window.onYouTubeIframeAPIReady = function () {
+      initYouTubePlayer();
+    };
+
+    function initYouTubePlayer() {
+      const container = document.getElementById('yt-player');
+      if (!container || ytPlayer) return;
+      ytPlayer = new YT.Player('yt-player', {
+        height: '120',
+        width: '100%',
+        videoId: appState.music.youtubeId,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          modestbranding: 1,
+          rel: 0
+        },
+        events: {
+          onReady: () => {
+            ytReady = true;
+            if (pendingYtId) {
+              ytPlayer.cueVideoById(pendingYtId);
+              pendingYtId = null;
+            }
+          },
+          onError: () => {
+            showToast('Este vídeo do YouTube bloqueou reprodução externa. Tente outro link ou arquivo MP3!', 'error');
+          }
+        }
+      });
+    }
+
+    function extractYouTubeId(input) {
+      const str = input.trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+      const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+      const match = str.match(regExp);
+      return match ? match[1] : null;
+    }
+
+    function loadYouTubeTrack() {
+      const rawUrl = document.getElementById('yt-url-input').value;
+      const title = document.getElementById('yt-title-input').value.trim() || 'Música Secreta do YouTube';
+      const videoId = extractYouTubeId(rawUrl);
+      if (!videoId) {
+        showToast('Link ou ID do YouTube inválido!', 'error');
+        return;
+      }
+
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_LOAD_YT', youtubeId: videoId, title });
+      } else {
+        appState.mode = 'music';
+        appState.music.sourceType = 'youtube';
+        appState.music.youtubeId = videoId;
+        appState.music.title = title;
+        appState.music.revealed = false;
+        appState.buzzedPlayer = null;
+        loadVideoInYouTubePlayer(videoId);
+        broadcastState();
+        renderAllUI();
+      }
+      showToast(`Música "${title}" carregada!`, 'success');
+    }
+
+    function quickSelectMusic(videoId, title) {
+      document.getElementById('yt-url-input').value = videoId;
+      document.getElementById('yt-title-input').value = title;
+      loadYouTubeTrack();
+    }
+
+    function loadVideoInYouTubePlayer(videoId) {
+      if (localAudioEl) {
+        localAudioEl.pause();
+      }
+      if (ytReady && ytPlayer && ytPlayer.cueVideoById) {
+        ytPlayer.cueVideoById(videoId);
+      } else {
+        pendingYtId = videoId;
+      }
+    }
+
+    // Carregamento de arquivo MP3/WAV local com Web Audio API DSP completa
+    function loadLocalAudioFile(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      unlockAudioContext();
+
+      if (ytReady && ytPlayer && ytPlayer.stopVideo) {
+        ytPlayer.stopVideo();
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      if (!localAudioEl) {
+        localAudioEl = new Audio();
+        localAudioEl.crossOrigin = 'anonymous';
+        setupLocalAudioDspChain(localAudioEl);
+      }
+      localAudioEl.src = objectUrl;
+      localAudioEl.loop = true;
+
+      appState.mode = 'music';
+      appState.music.sourceType = 'local';
+      appState.music.title = file.name.replace(/\.[^/.]+$/, '');
+      appState.music.revealed = false;
+      appState.buzzedPlayer = null;
+      broadcastState();
+      renderAllUI();
+      showToast(`Áudio local "${appState.music.title}" pronto com Distorção DSP!`, 'success');
+    }
+
+    function setupLocalAudioDspChain(audioElement) {
+      if (!audioCtx) unlockAudioContext();
+      localMediaSource = audioCtx.createMediaElementSource(audioElement);
+
+      // Nó de filtro passa-banda / rádio
+      dspFilterNode = audioCtx.createBiquadFilter();
+      dspFilterNode.type = 'bandpass';
+      dspFilterNode.frequency.value = 900;
+      dspFilterNode.Q.value = 3.5;
+
+      // Nó WaveShaper para Overdrive / Robótico
+      dspWaveShaper = audioCtx.createWaveShaper();
+      dspWaveShaper.curve = makeDistortionCurve(180);
+      dspWaveShaper.oversample = '4x';
+
+      // Nó de Eco/Delay
+      dspDelayNode = audioCtx.createDelay();
+      dspDelayNode.delayTime.value = 0.18;
+      dspFeedbackGain = audioCtx.createGain();
+      dspFeedbackGain.gain.value = 0.35;
+
+      dspDryGain = audioCtx.createGain();
+      dspWetGain = audioCtx.createGain();
+
+      // Roteamento Dry (Normal)
+      localMediaSource.connect(dspDryGain);
+      dspDryGain.connect(audioCtx.destination);
+
+      // Roteamento Wet (Distorcido)
+      localMediaSource.connect(dspFilterNode);
+      dspFilterNode.connect(dspWaveShaper);
+      dspWaveShaper.connect(dspWetGain);
+      dspWaveShaper.connect(dspDelayNode);
+      dspDelayNode.connect(dspFeedbackGain);
+      dspFeedbackGain.connect(dspDelayNode);
+      dspDelayNode.connect(dspWetGain);
+      dspWetGain.connect(audioCtx.destination);
+    }
+
+    function makeDistortionCurve(amount) {
+      const k = typeof amount === 'number' ? amount : 50;
+      const nSamples = 44100;
+      const curve = new Float32Array(nSamples);
+      const deg = Math.PI / 180;
+      for (let i = 0; i < nSamples; ++i) {
+        const x = (i * 2) / nSamples - 1;
+        curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+      }
+      return curve;
+    }
+
+    function playMusicRound() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_PLAY' });
+        return;
+      }
+      unlockAudioContext();
+      stopTimer();
+      appState.mode = 'music';
+      appState.music.isPlaying = true;
+      applyAudioDistortionSettings();
+
+      if (appState.music.sourceType === 'local' && localAudioEl) {
+        localAudioEl.play();
+      } else if (ytReady && ytPlayer && ytPlayer.playVideo) {
+        ytPlayer.playVideo();
+      }
+      broadcastState();
+      renderAllUI();
+    }
+
+    function pauseMusicRound(silent) {
+      if (!silent && appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_PAUSE' });
+        return;
+      }
+      appState.music.isPlaying = false;
+      clearStutterEffect();
+      if (localAudioEl) localAudioEl.pause();
+      if (ytReady && ytPlayer && ytPlayer.pauseVideo) {
+        ytPlayer.pauseVideo();
+      }
+      if (!silent) {
+        broadcastState();
+        renderAllUI();
+      }
+    }
+
+    function setMusicDistortedMode(distorted) {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_SET_DISTORTED', isDistorted: distorted });
+        return;
+      }
+      appState.music.isDistorted = distorted;
+      applyAudioDistortionSettings();
+      broadcastState();
+      renderAllUI();
+      showToast(distorted ? '🎛️ Modo DISTORCIDO ativado!' : '✨ Som 100% NORMAL restaurado!', 'info');
+    }
+
+    function updateDistortionParams() {
+      const rate = parseFloat(document.getElementById('music-rate-slider').value);
+      const dMode = document.getElementById('distortion-mode-select').value;
+      document.getElementById('rate-label').textContent = `${rate.toFixed(2)}x`;
+
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_UPDATE_PARAMS', rate, distortionMode: dMode });
+        return;
+      }
+      appState.music.rate = rate;
+      appState.music.distortionMode = dMode;
+      applyAudioDistortionSettings();
+      broadcastState();
+      renderAllUI();
+    }
+
+    function applyAudioDistortionSettings() {
+      clearStutterEffect();
+      const { isDistorted, rate, distortionMode, sourceType, isPlaying } = appState.music;
+
+      let targetRate = 1.0;
+      if (isDistorted) {
+        if (distortionMode === 'chipmunk') targetRate = 1.75;
+        else if (distortionMode === 'monster') targetRate = 0.55;
+        else targetRate = rate;
+      }
+
+      // Aplica no YouTube
+      if (sourceType === 'youtube' && ytReady && ytPlayer) {
+        if (ytPlayer.setPlaybackRate) ytPlayer.setPlaybackRate(targetRate);
+        if (ytPlayer.unMute) ytPlayer.unMute();
+        if (ytPlayer.setVolume) ytPlayer.setVolume(100);
+
+        // Efeito de corte rítmico / rádio falhando no YouTube em tempo real
+        if (isDistorted && isPlaying && (distortionMode === 'slow_chop' || distortionMode === 'stutter_fast')) {
+          const intervalMs = distortionMode === 'stutter_fast' ? 160 : 280;
+          let mutedStep = false;
+          stutterInterval = setInterval(() => {
+            if (!ytPlayer || !appState.music.isPlaying || !appState.music.isDistorted) return;
+            mutedStep = !mutedStep;
+            if (mutedStep) ytPlayer.setVolume(15);
+            else ytPlayer.setVolume(100);
+          }, intervalMs);
+        }
+      }
+
+      // Aplica no Áudio Local via Web Audio DSP
+      if (sourceType === 'local' && localAudioEl) {
+        localAudioEl.playbackRate = targetRate;
+        if (dspDryGain && dspWetGain) {
+          dspDryGain.gain.value = isDistorted ? 0.0 : 1.0;
+          dspWetGain.gain.value = isDistorted ? 1.0 : 0.0;
+        }
+      }
+    }
+
+    function clearStutterEffect() {
+      if (stutterInterval) {
+        clearInterval(stutterInterval);
+        stutterInterval = null;
+      }
+      if (ytReady && ytPlayer && ytPlayer.setVolume) {
+        ytPlayer.setVolume(100);
+      }
+    }
+
+    function revealMusicOnTv() {
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'MUSIC_REVEAL' });
+        return;
+      }
+      appState.music.revealed = true;
+      appState.music.isDistorted = false;
+      applyAudioDistortionSettings();
+      broadcastState();
+      renderAllUI();
+    }
+
+    // =========================================================================
+    // 10. EFEITOS SONOROS DE PROGRAMA DE AUDITÓRIO (WEB AUDIO API SINTETIZADO)
+    // =========================================================================
+    function unlockAudioContext() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContextClass();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function triggerSoundBroadcast(soundName) {
+      playSound(soundName);
+      if (appState.role === 'presenter') {
+        sendActionToHost({ type: 'PLAY_SOUND', sound: soundName });
+      } else {
+        hostConnections.forEach(c => {
+          if (c && c.open) c.send({ type: 'PLAY_SOUND', sound: soundName });
+        });
+      }
+    }
+
+    function playSound(type) {
+      // No modo apresentador remoto conectado à TV, o som principal sai na caixa da TV
+      if (appState.role === 'presenter' && presenterConn && presenterConn.open && type !== 'applause') {
+        return;
+      }
+      unlockAudioContext();
+      const now = audioCtx.currentTime;
+
+      if (type === 'buzzer1') {
+        // Campainha brilhante Jogador 1
+        playTone(880, 'triangle', now, 0.35, 0.4);
+        playTone(1174.66, 'sine', now + 0.08, 0.4, 0.35);
+      } else if (type === 'buzzer2') {
+        // Campainha dupla Jogador 2
+        playTone(523.25, 'sawtooth', now, 0.2, 0.3);
+        playTone(659.25, 'triangle', now + 0.12, 0.35, 0.35);
+      } else if (type === 'correct') {
+        // Fanfarra de Acerto!
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, i) => {
+          playTone(freq, 'triangle', now + i * 0.09, 0.35, 0.35);
+        });
+      } else if (type === 'wrong') {
+        // Buzina clássica "Fom-fom" de erro
+        playTone(155, 'sawtooth', now, 0.25, 0.35);
+        playTone(130, 'sawtooth', now + 0.28, 0.55, 0.4);
+      } else if (type === 'tick') {
+        playTone(950, 'sine', now, 0.05, 0.12);
+      } else if (type === 'tickUrgent') {
+        playTone(1350, 'square', now, 0.08, 0.22);
+      } else if (type === 'skip') {
+        // Whoosh descendente
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(700, now);
+        osc.frequency.exponentialRampToValueAtTime(180, now + 0.28);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.28);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      } else if (type === 'drumroll') {
+        for (let i = 0; i < 16; i++) {
+          playNoiseBurst(now + i * 0.06, 0.04, 0.18);
+        }
+      } else if (type === 'applause') {
+        for (let i = 0; i < 24; i++) {
+          playNoiseBurst(now + i * 0.055, 0.12, 0.14);
+        }
+      } else if (type === 'victory') {
+        const fanfare = [523.25, 659.25, 783.99, 1046.50, 783.99, 1046.50];
+        fanfare.forEach((f, idx) => {
+          playTone(f, 'triangle', now + idx * 0.14, idx === 5 ? 0.8 : 0.2, 0.4);
+        });
+      }
+    }
+
+    function playTone(freq, waveType, startTime, duration, volume) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = waveType;
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(volume, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    }
+
+    function playNoiseBurst(startTime, duration, volume) {
+      const bufferSize = audioCtx.sampleRate * duration;
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1200;
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(volume, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      noise.start(startTime);
+    }
+
+    // =========================================================================
+    // 11. RENDERIZAÇÃO DA INTERFACE (TV + CELULAR DO APRESENTADOR)
+    // =========================================================================
+    function renderAllUI() {
+      // 1. Placar e Destaque dos Jogadores
+      document.getElementById('p1-name-display').textContent = appState.players[1].name;
+      document.getElementById('p1-avatar').textContent = appState.players[1].avatar;
+      document.getElementById('p1-score-display').textContent = appState.players[1].score;
+
+      document.getElementById('p2-name-display').textContent = appState.players[2].name;
+      document.getElementById('p2-avatar').textContent = appState.players[2].avatar;
+      document.getElementById('p2-score-display').textContent = appState.players[2].score;
+
+      const card1 = document.getElementById('card-player-1');
+      const card2 = document.getElementById('card-player-2');
+      const banner1 = document.getElementById('p1-buzzed-banner');
+      const banner2 = document.getElementById('p2-buzzed-banner');
+
+      card1.classList.remove('buzzer-pulse-p1', 'opacity-40');
+      card2.classList.remove('buzzer-pulse-p2', 'opacity-40');
+      banner1.classList.add('hidden');
+      banner2.classList.add('hidden');
+
+      if (appState.buzzedPlayer === 1) {
+        card1.classList.add('buzzer-pulse-p1');
+        card2.classList.add('opacity-40');
+        banner1.classList.remove('hidden');
+      } else if (appState.buzzedPlayer === 2) {
+        card2.classList.add('buzzer-pulse-p2');
+        card1.classList.add('opacity-40');
+        banner2.classList.remove('hidden');
+      }
+
+      // Caixa de julgamento ao vivo no celular do apresentador
+      const liveBuzzerBox = document.getElementById('presenter-live-buzzer-box');
+      if (appState.buzzedPlayer !== null) {
+        liveBuzzerBox.classList.remove('hidden');
+        const pObj = appState.players[appState.buzzedPlayer];
+        document.getElementById('presenter-buzzed-player-name').textContent = `${pObj.avatar} ${pObj.name}`;
+      } else {
+        liveBuzzerBox.classList.add('hidden');
+      }
+
+      // 2. Timer
+      renderTimerOnly();
+
+      // 3. Painéis do Palco TV
+      const lobbyPanel = document.getElementById('stage-lobby-panel');
+      const quizPanel = document.getElementById('stage-quiz-panel');
+      const musicPanel = document.getElementById('stage-music-panel');
+      const victoryPanel = document.getElementById('stage-victory-panel');
+
+      lobbyPanel.classList.add('hidden');
+      quizPanel.classList.add('hidden');
+      musicPanel.classList.add('hidden');
+      victoryPanel.classList.add('hidden');
+
+      const modeBadge = document.getElementById('stage-mode-badge');
+      const counterBadge = document.getElementById('stage-question-counter');
+
+      if (appState.mode === 'lobby') {
+        lobbyPanel.classList.remove('hidden');
+        modeBadge.textContent = '🎪 AGUARDANDO INÍCIO';
+        counterBadge.textContent = `${appState.questions.length} perguntas carregadas`;
+      } else if (appState.mode === 'quiz') {
+        quizPanel.classList.remove('hidden');
+        modeBadge.textContent = '❓ QUIZ DE AUDITÓRIO';
+        renderQuizStage();
+      } else if (appState.mode === 'music') {
+        musicPanel.classList.remove('hidden');
+        modeBadge.textContent = '🎵 QUAL É A MÚSICA?';
+        counterBadge.textContent = appState.music.isDistorted ? 'Áudio Distorcido' : 'Áudio Original';
+        renderMusicStage();
+      } else if (appState.mode === 'victory') {
+        victoryPanel.classList.remove('hidden');
+        modeBadge.textContent = '🏆 RESULTADO FINAL';
+        counterBadge.textContent = 'Fim de Jogo';
+        renderVictoryStage();
+      }
+
+      // 4. Cola Secreta do Apresentador (sempre atualizada no celular)
+      renderPresenterQuizPreview();
+    }
+
+    function renderTimerOnly() {
+      const timerVal = document.getElementById('stage-timer-value');
+      const timerBox = document.getElementById('stage-timer-box');
+      if (!timerVal) return;
+      timerVal.textContent = appState.timeLeft;
+      if (appState.timeLeft <= 5 && appState.mode === 'quiz') {
+        timerBox.classList.remove('border-yellow-400');
+        timerBox.classList.add('border-red-500', 'bg-red-950');
+        timerVal.classList.remove('text-yellow-300');
+        timerVal.classList.add('text-red-400');
+      } else {
+        timerBox.classList.add('border-yellow-400');
+        timerBox.classList.remove('border-red-500', 'bg-red-950');
+        timerVal.classList.add('text-yellow-300');
+        timerVal.classList.remove('text-red-400');
+      }
+    }
+
+    function renderQuizStage() {
+      const total = appState.questions.length;
+      const idx = Math.min(appState.currentQuestionIndex, Math.max(0, total - 1));
+      const q = appState.questions[idx];
+      if (!q) return;
+
+      document.getElementById('stage-question-counter').textContent = `Pergunta ${idx + 1} de ${total}`;
+      document.getElementById('tv-question-text').textContent = q.question;
+
+      const grid = document.getElementById('tv-options-grid');
+      grid.innerHTML = '';
+      const letters = ['A', 'B', 'C', 'D', 'E'];
+
+      q.options.forEach((opt, i) => {
+        const isCorrect = i === q.correctIndex;
+        const showGreen = appState.questionRevealed && isCorrect;
+        const card = document.createElement('div');
+        card.className = `flex items-center gap-3 sm:gap-4 p-4 sm:p-5 rounded-2xl border-2 transition-all ${
+          showGreen
+            ? 'bg-emerald-600/90 border-emerald-300 shadow-[0_0_30px_rgba(16,185,129,0.7)] scale-[1.02]'
+            : 'bg-purple-950/75 border-purple-500/50'
+        }`;
+        card.innerHTML = `
+          <span class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-black text-lg sm:text-xl shrink-0 ${
+            showGreen ? 'bg-white text-emerald-800' : 'bg-yellow-500 text-black'
+          }">${letters[i] || i + 1}</span>
+          <span class="text-lg sm:text-2xl font-extrabold text-white leading-snug">${escapeHtml(opt)}</span>
+          ${showGreen ? '<span class="ml-auto text-2xl">✅</span>' : ''}
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function renderPresenterQuizPreview() {
+      const total = appState.questions.length;
+      const idx = Math.min(appState.currentQuestionIndex, Math.max(0, total - 1));
+      const q = appState.questions[idx];
+      const qProgress = document.getElementById('presenter-q-progress');
+      const qPreview = document.getElementById('presenter-question-preview');
+      const optPreview = document.getElementById('presenter-options-preview');
+
+      if (!q) {
+        qPreview.textContent = 'Nenhuma pergunta cadastrada.';
+        optPreview.innerHTML = '';
+        return;
+      }
+
+      qProgress.textContent = `Pergunta ${idx + 1} / ${total}`;
+      qPreview.textContent = `(${idx + 1}) ${q.question}`;
+      optPreview.innerHTML = '';
+      const letters = ['A', 'B', 'C', 'D', 'E'];
+
+      q.options.forEach((opt, i) => {
+        const isCorrect = i === q.correctIndex;
+        const div = document.createElement('div');
+        div.className = `px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-between border ${
+          isCorrect
+            ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200'
+            : 'bg-gray-900/80 border-gray-700 text-gray-300'
+        }`;
+        div.innerHTML = `
+          <span><strong>${letters[i] || i + 1})</strong> ${escapeHtml(opt)}</span>
+          ${isCorrect ? '<span class="bg-emerald-500 text-black text-[10px] font-black px-2 py-0.5 rounded-md">CERTA (R)</span>' : ''}
+        `;
+        optPreview.appendChild(div);
+      });
+    }
+
+    function renderMusicStage() {
+      document.getElementById('music-current-name-presenter').textContent = `🎵 ${appState.music.title}`;
+
+      const badge = document.getElementById('tv-distortion-badge');
+      if (appState.music.isDistorted) {
+        badge.className = 'bg-red-600/90 border-2 border-red-300 text-white font-black px-6 py-2.5 rounded-2xl text-sm sm:text-lg shadow-lg';
+        badge.textContent = '🎛️ ÁUDIO DISTORCIDO ATIVO!';
+      } else {
+        badge.className = 'bg-emerald-600/90 border-2 border-emerald-300 text-white font-black px-6 py-2.5 rounded-2xl text-sm sm:text-lg shadow-lg';
+        badge.textContent = '✨ TOCANDO VERSÃO ORIGINAL (NORMAL)!';
+      }
+
+      const revealBox = document.getElementById('tv-music-reveal-box');
+      if (appState.music.revealed) {
+        revealBox.classList.remove('hidden');
+        document.getElementById('tv-music-reveal-title').textContent = appState.music.title;
+      } else {
+        revealBox.classList.add('hidden');
+      }
+    }
+
+    function renderVictoryStage() {
+      const p1 = appState.players[1];
+      const p2 = appState.players[2];
+      document.getElementById('final-p1-name').textContent = `${p1.avatar} ${p1.name}`;
+      document.getElementById('final-p1-score').textContent = `${p1.score} pts`;
+      document.getElementById('final-p2-name').textContent = `${p2.avatar} ${p2.name}`;
+      document.getElementById('final-p2-score').textContent = `${p2.score} pts`;
+
+      const title = document.getElementById('victory-winner-title');
+      const sub = document.getElementById('victory-subtitle');
+
+      if (p1.score > p2.score) {
+        title.textContent = `CAMPEÃO: ${p1.avatar} ${p1.name.toUpperCase()}!`;
+        sub.textContent = `Venceu com ${p1.score} pontos contra ${p2.score} pontos!`;
+      } else if (p2.score > p1.score) {
+        title.textContent = `CAMPEÃO: ${p2.avatar} ${p2.name.toUpperCase()}!`;
+        sub.textContent = `Venceu com ${p2.score} pontos contra ${p1.score} pontos!`;
+      } else {
+        title.textContent = `EMPATE TÉCNICO NO AUDITÓRIO!`;
+        sub.textContent = `Ambos terminaram com ${p1.score} pontos!`;
+      }
+    }
+
+    function switchPresenterTab(tabName) {
+      const tabs = ['quiz', 'music', 'players', 'bank'];
+      tabs.forEach(t => {
+        document.getElementById(`presenter-tab-${t}`).classList.toggle('hidden', t !== tabName);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tabName) {
+          btn.className = 'px-3 py-2 rounded-xl text-xs font-black bg-yellow-500 text-black transition';
+        } else {
+          btn.className = 'px-3 py-2 rounded-xl text-xs font-black text-purple-200 hover:bg-purple-800/50 transition';
+        }
+      });
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      const bgClass =
+        type === 'success' ? 'bg-emerald-600 border-emerald-300' :
+        type === 'error' ? 'bg-red-600 border-red-300' :
+        'bg-purple-800 border-yellow-400';
+
+      toast.className = `${bgClass} border text-white font-bold text-xs sm:text-sm px-4 py-3 rounded-2xl shadow-2xl transition-all duration-300`;
+      toast.textContent = message;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-10px)';
+        setTimeout(() => toast.remove(), 300);
+      }, 3200);
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>
